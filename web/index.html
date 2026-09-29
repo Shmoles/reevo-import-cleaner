@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reevo Import Cleaner</title>
+<meta name="description" content="Turn a HubSpot contact export into an upload-ready Reevo import file. Runs entirely in your browser.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single-column workbench. Intake -> summary + downloads -> column mapping -> result tables.
+   Summary before detail; state carried by chips (ready / rejected / flagged), not colour alone. */
+:root {
+  --bg: #F3F5F8;
+  --surface: #FFFFFF;
+  --surface-2: #F8F9FB;
+  --line: #D8DEE6;
+  --fg: #15202B;
+  --muted: #5A6674;
+  --accent: #2B50D8;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #E7ECFF;
+  --ok: #1D7A4C;      --ok-soft: #E2F2E9;
+  --warn: #9A5B00;    --warn-soft: #FBEFD9;
+  --bad: #B8342A;     --bad-soft: #FBE5E2;
+  --focus: #2B50D8;
+
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --font-body: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.125rem;
+  --step-2: 1.5rem;
+  --step-3: 2.125rem;
+  --radius: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0E1319; --surface: #151C24; --surface-2: #1A222C; --line: #2A3441;
+    --fg: #E5EAF0; --muted: #93A0AF;
+    --accent: #8AA2FF; --accent-ink: #0E1319; --accent-soft: #1C2647;
+    --ok: #5CC28E; --ok-soft: #15301F; --warn: #E6AC4E; --warn-soft: #382A12; --bad: #F08074; --bad-soft: #3A1C19;
+    --focus: #8AA2FF; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0E1319; --surface: #151C24; --surface-2: #1A222C; --line: #2A3441;
+  --fg: #E5EAF0; --muted: #93A0AF;
+  --accent: #8AA2FF; --accent-ink: #0E1319; --accent-soft: #1C2647;
+  --ok: #5CC28E; --ok-soft: #15301F; --warn: #E6AC4E; --warn-soft: #382A12; --bad: #F08074; --bad-soft: #3A1C19;
+  --focus: #8AA2FF; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 400 var(--step-0)/1.55 var(--font-body);
+  padding-inline: 16px; padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 20px; padding-block: 20px 48px; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; letter-spacing: 0.005em; text-wrap: balance; margin: 0; }
+h1 { font-size: var(--step-3); line-height: 1.1; }
+h2 { font-size: var(--step-1); line-height: 1.25; }
+p { margin: 0; }
+code, .mono { font-family: var(--font-mono); font-size: 0.92em; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
+
+/* ---------- top ---------- */
+.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px 24px; padding-top: 8px; }
+.top .eyebrow { font: 500 var(--step--1)/1 var(--font-mono); color: var(--muted); letter-spacing: 0.04em; margin-bottom: 8px; display: flex; gap: 8px; align-items: center; }
+.top .eyebrow .arrow { color: var(--accent); }
+.top .lede { color: var(--muted); max-width: 60ch; margin-top: 8px; }
+.engine { display: inline-flex; align-items: center; gap: 8px; font-size: var(--step--1); color: var(--muted);
+  border: 1px solid var(--line); background: var(--surface); padding: 6px 12px; border-radius: 999px; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); flex: none; }
+.engine[data-state="ready"] .dot { background: var(--ok); }
+.engine[data-state="error"] .dot { background: var(--bad); }
+.engine[data-state="loading"] .dot { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+/* ---------- panels ---------- */
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 14px; }
+.panel-head p { color: var(--muted); font-size: var(--step--1); }
+
+/* ---------- intake ---------- */
+.intake { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 20px; }
+.drop { border: 1.5px dashed var(--line); border-radius: var(--radius); background: var(--surface-2);
+  display: grid; place-items: center; text-align: center; padding: 28px 20px; gap: 10px; min-height: 190px;
+  transition: border-color .15s, background .15s; cursor: pointer; }
+.drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop .big { font: 600 var(--step-2)/1.2 var(--font-display); }
+.drop .small { color: var(--muted); font-size: var(--step--1); }
+.drop-inner { display: grid; gap: 10px; justify-items: center; }
+.btn { font: 500 var(--step-0)/1 var(--font-body); border-radius: 8px; padding: 10px 14px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); cursor: pointer; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.07); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn .count { font-family: var(--font-mono); font-size: var(--step--1); opacity: .8; }
+.linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.settings { display: grid; gap: 16px; align-content: start; }
+.field { display: grid; gap: 6px; }
+.field label { font-weight: 600; font-size: var(--step--1); }
+.field .hint { color: var(--muted); font-size: var(--step--1); }
+.field .err { color: var(--bad); font-size: var(--step--1); }
+input[type="email"] { font: inherit; padding: 9px 11px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); width: 100%; }
+input[type="email"][aria-invalid="true"] { border-color: var(--bad); }
+.filemeta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: var(--step--1); padding-top: 14px; border-top: 1px solid var(--line); }
+.filemeta dt { color: var(--muted); }
+.filemeta dd { margin: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.privacy { display: flex; gap: 10px; align-items: flex-start; font-size: var(--step--1); color: var(--muted); }
+.privacy svg { flex: none; margin-top: 2px; color: var(--ok); }
+
+/* ---------- notices ---------- */
+.notice { border-radius: var(--radius); padding: 12px 16px; font-size: var(--step--1); display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.notice.sample { background: var(--accent-soft); color: var(--fg); }
+.notice.error { background: var(--bad-soft); color: var(--fg); border: 1px solid var(--bad); }
+.notice.error strong { color: var(--bad); }
+.notice pre { margin: 6px 0 0; white-space: pre-wrap; font: var(--step--1)/1.5 var(--font-mono); width: 100%; }
+
+/* ---------- summary ---------- */
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.stat { background: var(--surface); padding: 14px 16px; display: grid; gap: 4px; }
+.stat .label { font-size: var(--step--1); color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.stat .value { font: 600 var(--step-3)/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.stat.ready .value { color: var(--ok); }
+.stat.rejected .value { color: var(--bad); }
+.stat.review .value { color: var(--warn); }
+.swatch { width: 8px; height: 8px; border-radius: 2px; background: var(--muted); }
+.stat.ready .swatch { background: var(--ok); } .stat.rejected .swatch { background: var(--bad); } .stat.review .swatch { background: var(--warn); }
+.downloads { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 16px; }
+.downloads .runtime { margin-left: auto; color: var(--muted); font-size: var(--step--1); font-family: var(--font-mono); }
+
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; margin-top: 18px; }
+.split h3 { font: 600 var(--step--1)/1.2 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+.reasons { display: grid; gap: 8px; }
+.reason { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: var(--step--1); }
+.reason .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.reason .bar span { display: block; height: 100%; background: var(--bad); border-radius: 3px; }
+.reason .n { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.warnings { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; font-size: var(--step--1); }
+.warnings li { padding-left: 14px; position: relative; }
+.warnings li::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.empty-note { color: var(--muted); font-size: var(--step--1); }
+
+/* ---------- mapping ---------- */
+.scroll { overflow-x: auto; min-width: 0; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1); }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { background: var(--surface-2); font-weight: 600; color: var(--muted); position: sticky; top: 0; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: 0; }
+.map td:first-child { font-family: var(--font-mono); white-space: nowrap; }
+.map .obj { color: var(--muted); white-space: nowrap; }
+.map select { font: var(--step--1)/1.3 var(--font-mono); padding: 6px 8px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); max-width: 100%; width: 100%; min-width: 220px; }
+.map select.changed { border-color: var(--accent); background: var(--accent-soft); }
+.chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.chip.req { background: var(--accent-soft); color: var(--accent); }
+.chip.rec { background: var(--surface-2); color: var(--muted); border: 1px solid var(--line); }
+.chip.ok { background: var(--ok-soft); color: var(--ok); }
+.chip.missing { background: var(--bad-soft); color: var(--bad); }
+.chip.blank { background: var(--warn-soft); color: var(--warn); }
+
+/* ---------- results ---------- */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 12px; font: 500 var(--step-0)/1 var(--font-body); color: var(--muted); cursor: pointer; display: inline-flex; gap: 8px; align-items: center; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); }
+.tab .n { font: 500 0.75rem/1 var(--font-mono); padding: 3px 6px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); }
+.results .scroll { max-height: 520px; overflow: auto; }
+.results td { white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.results td.wrap { white-space: normal; min-width: 280px; max-width: 520px; }
+.results td.rownum, .results th.rownum { font-family: var(--font-mono); color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.results .nil { color: var(--muted); opacity: .6; }
+.results td.flag { background: var(--warn-soft); text-decoration: underline dotted var(--warn); text-underline-offset: 3px; cursor: help; }
+.results .mono-cell { font-family: var(--font-mono); }
+.more { color: var(--muted); font-size: var(--step--1); margin-top: 10px; }
+.legend { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 12px; height: 12px; border-radius: 3px; background: var(--warn-soft); border: 1px dotted var(--warn); display: inline-block; }
+
+footer { color: var(--muted); font-size: var(--step--1); display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: space-between; padding-top: 4px; }
+
+@media (max-width: 860px) {
+  .intake, .split { grid-template-columns: minmax(0, 1fr); }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat:first-child { grid-column: 1 / -1; }
+  .downloads .runtime { margin-left: 0; width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <div class="eyebrow"><span>HubSpot export</span><span class="arrow">→</span><span>Reevo import file</span></div>
+      <h1>Reevo Import Cleaner</h1>
+      <p class="lede">Drop in a customer's HubSpot contact export. You get back an upload-ready Reevo file, a list of rows that can't be imported and why, and a list of everything the tool changed.</p>
+    </div>
+    <div class="engine" id="engine" data-state="loading" role="status" aria-live="polite"><span class="dot"></span><span id="engine-text">Loading the cleaning engine…</span></div>
+  </header>
+
+  <!-- 1. Intake -->
+  <section class="panel intake" aria-label="Upload a file">
+    <div>
+      <label class="drop" id="drop" for="file">
+        <div class="drop-inner">
+          <div class="big">Drop a HubSpot export here</div>
+          <div class="small">.csv, .tsv, .txt or .xlsx · any column order · up to 100k+ rows</div>
+          <span class="btn primary" aria-hidden="true">Choose file</span>
+        </div>
+      </label>
+      <input type="file" id="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls" hidden>
+    </div>
+    <div class="settings">
+      <div class="field">
+        <label for="owner">Default record owner <span class="hint">(optional)</span></label>
+        <input type="email" id="owner" placeholder="rep@company.com" autocomplete="off" spellcheck="false">
+        <span class="hint" id="owner-hint">Reevo user email for contacts and accounts that have no owner in the export.</span>
+        <span class="err" id="owner-err" hidden>Enter a full email address, like rep@company.com.</span>
+      </div>
+      <p class="privacy">
+        <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 1 2 3.5v4.3c0 3.4 2.5 6.3 6 7.2 3.5-.9 6-3.8 6-7.2V3.5L8 1Zm-1 10L4 8l1.1-1.1L7 8.8l3.9-3.9L12 6l-5 5Z"/></svg>
+        <span>Your file is processed inside this browser tab. It is never uploaded.</span>
+      </p>
+      <dl class="filemeta" id="filemeta" hidden>
+        <dt>File</dt><dd id="meta-name"></dd>
+        <dt>Rows</dt><dd id="meta-rows"></dd>
+        <dt>Columns</dt><dd id="meta-cols"></dd>
+      </dl>
+      <p class="empty-note" id="sample-link-wrap">No file handy? <button class="linkbtn" id="use-sample" type="button">Load the sample export</button></p>
+    </div>
+  </section>
+
+  <div class="notice sample" id="sample-note" hidden>
+    <strong>Showing the sample export</strong> (56 contacts from the case study). Drop your own file above to replace it.
+  </div>
+  <div class="notice error" id="error" hidden role="alert"><strong id="error-title">This file can't be cleaned yet.</strong><span id="error-help"></span><pre id="error-msg"></pre></div>
+
+  <!-- 2. Summary + downloads -->
+  <section class="panel" id="summary" aria-labelledby="summary-h" hidden>
+    <div class="panel-head">
+      <h2 id="summary-h">Result</h2>
+      <p id="summary-sub"></p>
+    </div>
+    <div class="stats">
+      <div class="stat"><span class="label"><span class="swatch"></span>Rows read</span><span class="value" id="c-read">0</span></div>
+      <div class="stat ready"><span class="label"><span class="swatch"></span>Ready to import</span><span class="value" id="c-ready">0</span></div>
+      <div class="stat rejected"><span class="label"><span class="swatch"></span>Rejected</span><span class="value" id="c-rejected">0</span></div>
+      <div class="stat review"><span class="label"><span class="swatch"></span>Changes to review</span><span class="value" id="c-review">0</span></div>
+      <div class="stat"><span class="label"><span class="swatch"></span>Duplicates removed</span><span class="value" id="c-dups">0</span></div>
+    </div>
+    <div class="downloads">
+      <button class="btn primary" id="dl-import" type="button">Download import file <span class="count" id="dl-import-n"></span></button>
+      <button class="btn" id="dl-rejected" type="button">Rejected rows <span class="count" id="dl-rejected-n"></span></button>
+      <button class="btn" id="dl-review" type="button">Review notes <span class="count" id="dl-review-n"></span></button>
+      <span class="runtime" id="runtime"></span>
+    </div>
+    <div class="split">
+      <div>
+        <h3>Why rows were rejected</h3>
+        <div class="reasons" id="reasons"></div>
+      </div>
+      <div>
+        <h3>File-level warnings</h3>
+        <ul class="warnings" id="warnings"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. Column mapping -->
+  <section class="panel" id="mapping" aria-labelledby="mapping-h" hidden>
+    <div class="panel-head">
+      <h2 id="mapping-h">Column mapping</h2>
+      <p>Matched automatically by column name. Change a dropdown to use a different column; results update right away.</p>
+    </div>
+    <div class="scroll">
+      <table class="map">
+        <thead><tr><th>Reevo import header</th><th>Reevo field</th><th>Required</th><th>Taken from</th><th>Status</th></tr></thead>
+        <tbody id="map-body"></tbody>
+      </table>
+    </div>
+    <p class="more"><button class="linkbtn" id="reset-map" type="button" hidden>Reset to automatic mapping</button></p>
+  </section>
+
+  <!-- 4. Results -->
+  <section class="panel results" id="results" aria-labelledby="results-h" hidden>
+    <div class="panel-head">
+      <h2 id="results-h">Rows</h2>
+      <p id="results-note"><span class="legend"><i></i> Cell the tool changed or guessed. Hover for details.</span></p>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-ready" aria-selected="true" aria-controls="table-wrap" data-tab="ready" type="button">Ready to import <span class="n" id="tn-ready">0</span></button>
+      <button class="tab" role="tab" id="tab-rejected" aria-selected="false" aria-controls="table-wrap" data-tab="rejected" type="button">Rejected <span class="n" id="tn-rejected">0</span></button>
+      <button class="tab" role="tab" id="tab-review" aria-selected="false" aria-controls="table-wrap" data-tab="review" type="button">Review notes <span class="n" id="tn-review">0</span></button>
+    </div>
+    <div class="scroll" id="table-wrap" role="tabpanel"><table id="table"></table></div>
+    <p class="more" id="table-more"></p>
+  </section>
+
+  <footer>
+    <span>Runs the same Python engine as the command-line tool, checked by 36 automated tests.</span>
+    <a href="https://github.com/Shmoles/reevo-import-cleaner">Source, rules and tests on GitHub</a>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const PREVIEW = 200;
+
+  // Reevo template rows 1–3, keyed by import header (row 4).
+  const FIELDS = {
+    contact_owner_id:             { obj: "Contact",         field: "Owner ID (email)", req: "Recommended" },
+    contact_first_name:           { obj: "Contact",         field: "First Name",       req: "Yes" },
+    contact_last_name:            { obj: "Contact",         field: "Last Name",        req: "Yes" },
+    contact_primary_email:        { obj: "Contact",         field: "Email",            req: "Yes, if no phone" },
+    contact_primary_phone_number: { obj: "Contact",         field: "Phone Number",     req: "Yes, if no email" },
+    contact_linkedin_url:         { obj: "Contact",         field: "Linkedin URL",     req: "Recommended" },
+    contact_account_role_title:   { obj: "Contact-Account", field: "Job Title",        req: "Recommended" },
+    account_owner_id:             { obj: "Account",         field: "Owner ID (email)", req: "Recommended" },
+    account_name:                 { obj: "Account",         field: "Name",             req: "Yes" },
+    account_domain_name:          { obj: "Account",         field: "Domain Name",      req: "Yes" },
+    account_linkedin_url:         { obj: "Account",         field: "Linkedin URL",     req: "Recommended" },
+  };
+
+  // ---------- engine (web worker running Pyodide) ----------
+  const params = new URLSearchParams(location.search);
+  const worker = new Worker("worker.js");
+  let seq = 0; const pending = new Map();
+  worker.onmessage = (e) => {
+    const { id, ok, result, error } = e.data;
+    const p = pending.get(id); pending.delete(id);
+    ok ? p.resolve(result) : p.reject(new Error(error));
+  };
+  const call = (type, payload, transfer) => new Promise((resolve, reject) => {
+    const id = ++seq; pending.set(id, { resolve, reject });
+    worker.postMessage({ id, type, payload }, transfer || []);
+  });
+
+  const state = { ready: false, headers: [], mapping: {}, result: null, tab: "ready", file: null, isSample: false, queued: null };
+
+  const engineReady = call("init", { pyodideBase: params.get("pyodide") || "", xlsx: params.get("xlsx") || "" })
+    .then(({ loadMs }) => {
+      state.ready = true;
+      setEngine("ready", `Engine ready · runs in your browser (${(loadMs / 1000).toFixed(1)}s)`);
+    })
+    .catch((err) => {
+      setEngine("error", "Engine failed to load");
+      showError("The cleaning engine couldn't load.", "Check your internet connection and reload the page. The engine is downloaded once, then everything runs locally.", err.message);
+      throw err;
+    });
+
+  function setEngine(s, text) { $("engine").dataset.state = s; $("engine-text").textContent = text; }
+
+  // ---------- intake ----------
+  const drop = $("drop");
+  ["dragenter", "dragover"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((t) => drop.addEventListener(t, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f) openFile(f, false); });
+  $("file").addEventListener("change", (e) => { const f = e.target.files[0]; if (f) openFile(f, false); e.target.value = ""; });
+  $("use-sample").addEventListener("click", () => loadSample());
+
+  async function loadSample() {
+    try {
+      const res = await fetch("sample.csv");
+      if (!res.ok) throw new Error(res.status);
+      const blob = await res.blob();
+      await openFile(new File([blob], "sample_hubspot_export.csv", { type: "text/csv" }), true);
+    } catch { $("sample-link-wrap").hidden = true; }
+  }
+
+  async function openFile(file, isSample) {
+    hideError();
+    setEngine("loading", state.ready ? `Reading ${file.name}…` : "Loading the cleaning engine…");
+    await engineReady;
+    const buffer = await file.arrayBuffer();
+    let info;
+    try {
+      info = await call("load", { name: file.name, buffer }, [buffer]);
+    } catch (err) {
+      setEngine("ready", "Engine ready · runs in your browser");
+      return showError("This file couldn't be read.", "Save it as .csv or .xlsx and try again.", err.message);
+    }
+    state.file = file; state.isSample = isSample; state.headers = info.headers; state.mapping = {};
+    $("meta-name").textContent = file.name;
+    $("meta-rows").textContent = info.rows.toLocaleString();
+    $("meta-cols").textContent = info.headers.filter(Boolean).length;
+    $("filemeta").hidden = false;
+    $("sample-note").hidden = !isSample;
+    $("sample-link-wrap").hidden = isSample;
+    await runClean();
+  }
+
+  // ---------- run ----------
+  let running = null;
+  async function runClean() {
+    if (!state.file) return;
+    const ownerEl = $("owner");
+    const owner = ownerEl.value.trim();
+    const ownerOk = !owner || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(owner);
+    ownerEl.setAttribute("aria-invalid", String(!ownerOk));
+    $("owner-err").hidden = ownerOk; $("owner-hint").hidden = !ownerOk;
+    setEngine("loading", `Cleaning ${state.file.name}…`);
+    const job = call("run", { owner: ownerOk ? owner : "", mapping: state.mapping, preview: PREVIEW });
+    running = job;
+    const r = await job;
+    if (running !== job) return;          // a newer run superseded this one
+    setEngine("ready", "Engine ready · runs in your browser");
+    state.result = r;
+    renderMapping(r);
+    if (r.error) {
+      $("summary").hidden = true; $("results").hidden = true;
+      const missing = (r.error.split("\n")[0].split("found for:")[1] || "").trim();
+      return showError("This file is missing columns the import needs.",
+        "Pick the right column for each row marked Missing in Column mapping below. The results update as soon as every required field has a source.",
+        missing ? `No column found for: ${missing}` : r.error.split("\n")[0]);
+    }
+    hideError();
+    renderSummary(r); renderTable();
+  }
+
+  $("owner").addEventListener("change", runClean);
+
+  // ---------- render: summary ----------
+  function renderSummary(r) {
+    const c = r.counts;
+    $("summary").hidden = false; $("results").hidden = false;
+    $("c-read").textContent = c.read.toLocaleString();
+    $("c-ready").textContent = c.ready.toLocaleString();
+    $("c-rejected").textContent = c.rejected.toLocaleString();
+    $("c-review").textContent = c.review.toLocaleString();
+    $("c-dups").textContent = c.duplicates.toLocaleString();
+    $("dl-import-n").textContent = `${c.ready.toLocaleString()} rows`;
+    $("dl-rejected-n").textContent = c.rejected.toLocaleString();
+    $("dl-review-n").textContent = (c.review + r.warnings.length).toLocaleString();
+    $("runtime").textContent = `Cleaned in ${r.ms < 1000 ? Math.max(1, Math.round(r.ms)) + " ms" : (r.ms / 1000).toFixed(1) + " s"}`;
+    const pct = c.read ? Math.round((c.ready / c.read) * 100) : 0;
+    $("summary-sub").textContent = `${pct}% of rows are ready. The import file has one header row and the 11 Reevo columns, nothing else.`;
+
+    const reasons = $("reasons"); reasons.replaceChildren();
+    if (!r.reasons.length) reasons.append(el("p", { class: "empty-note" }, "No rows were rejected."));
+    const max = Math.max(1, ...r.reasons.map(([, n]) => n));
+    for (const [label, n] of r.reasons) {
+      const bar = el("div", { class: "bar" }, el("span", { style: `width:${(n / max) * 100}%` }));
+      reasons.append(el("div", { class: "reason" }, el("span", {}, sentence(label)), el("span", { class: "n" }, n.toLocaleString()), bar));
+    }
+    const warns = $("warnings"); warns.replaceChildren();
+    if (!r.warnings.length) warns.append(el("li", {}, "None."));
+    for (const w of r.warnings) warns.append(el("li", {}, w));
+
+    $("tn-ready").textContent = c.ready.toLocaleString();
+    $("tn-rejected").textContent = c.rejected.toLocaleString();
+    $("tn-review").textContent = (c.review + r.warnings.length).toLocaleString();
+  }
+
+  // ---------- render: mapping ----------
+  const AUTO = "__auto__", NONE = "__none__";
+  function renderMapping(r) {
+    $("mapping").hidden = false;
+    const body = $("map-body"); body.replaceChildren();
+    const headers = state.headers.filter(Boolean);
+    for (const [key, meta] of Object.entries(FIELDS)) {
+      const auto = r.auto_mapping[key] || [];
+      const used = r.mapping[key] || [];
+      const sel = el("select", { id: `map-${key}`, "aria-label": `Source column for ${key}` });
+      sel.append(el("option", { value: AUTO }, auto.length ? `Auto: ${auto.join(" → ")}` : "Auto: no matching column"));
+      sel.append(el("option", { value: NONE }, "Leave blank"));
+      const group = el("optgroup", { label: "Columns in this file" });
+      headers.forEach((h) => group.append(el("option", { value: h }, h)));
+      sel.append(group);
+      const override = state.mapping[key];
+      sel.value = override === undefined ? AUTO : override.length ? override[0] : NONE;
+      if (override !== undefined) sel.classList.add("changed");
+      sel.addEventListener("change", () => {
+        if (sel.value === AUTO) delete state.mapping[key];
+        else state.mapping[key] = sel.value === NONE ? [] : [sel.value];
+        runClean();
+      });
+      const required = meta.req === "Yes";
+      const reqChip = el("span", { class: `chip ${meta.req.startsWith("Yes") ? "req" : "rec"}` }, meta.req === "Yes" ? "Required" : meta.req.startsWith("Yes") ? meta.req.replace("Yes, if", "If") : "Recommended");
+      let status;
+      if (used.length) status = el("span", { class: "chip ok" }, "Mapped");
+      else if (key.endsWith("owner_id") && $("owner").value.trim()) status = el("span", { class: "chip ok" }, "Default owner");
+      else if (key === "account_domain_name") status = el("span", { class: "chip blank" }, "From email");
+      else if (required) status = el("span", { class: "chip missing" }, "Missing");
+      else status = el("span", { class: "chip blank" }, "Blank");
+      body.append(el("tr", {},
+        el("td", {}, key),
+        el("td", { class: "obj" }, `${meta.obj} · ${meta.field}`),
+        el("td", {}, reqChip),
+        el("td", {}, sel),
+        el("td", {}, status)));
+    }
+    $("reset-map").hidden = !Object.keys(state.mapping).length;
+  }
+  $("reset-map").addEventListener("click", () => { state.mapping = {}; runClean(); });
+
+  // ---------- render: tables ----------
+  document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
+    state.tab = t.dataset.tab;
+    document.querySelectorAll(".tab").forEach((x) => x.setAttribute("aria-selected", String(x === t)));
+    renderTable();
+  }));
+
+  function renderTable() {
+    const r = state.result; if (!r || r.error) return;
+    const table = $("table"); table.replaceChildren();
+    const thead = el("thead"), tbody = el("tbody"); table.append(thead, tbody);
+    let total, shown;
+    $("results-note").hidden = state.tab !== "ready";
+
+    if (state.tab === "ready") {
+      const flags = new Map();
+      for (const [row, field, issue] of r.review_index) {
+        const k = `${row}|${field}`; flags.set(k, flags.has(k) ? flags.get(k) + "\n" + issue : issue);
+      }
+      thead.append(el("tr", {}, el("th", { class: "rownum" }, "Row"), ...r.columns.map((c) => el("th", { class: "mono-cell" }, c))));
+      for (const rec of r.ready_preview) {
+        const tr = el("tr", {}, el("td", { class: "rownum" }, String(rec._source_row)));
+        for (const c of r.columns) {
+          const v = rec[c];
+          const td = el("td", {}, v || "—");
+          if (!v) td.classList.add("nil");
+          const f = flags.get(`${rec._source_row}|${c}`);
+          if (f) { td.classList.add("flag"); td.title = f; td.tabIndex = 0; }
+          if (c.includes("email") || c.includes("phone") || c.includes("url") || c.includes("domain") || c.includes("owner")) td.classList.add("mono-cell");
+          tr.append(td);
+        }
+        tbody.append(tr);
+      }
+      total = r.counts.ready; shown = r.ready_preview.length;
+    } else if (state.tab === "rejected") {
+      thead.append(el("tr", {}, el("th", { class: "rownum" }, "Row"), el("th", {}, "Name"), el("th", {}, "Why it can't be imported")));
+      for (const x of r.rejected_preview) {
+        tbody.append(el("tr", {}, el("td", { class: "rownum" }, String(x.source_row)), el("td", {}, x.name || "—"), el("td", { class: "wrap" }, x.reject_reason)));
+      }
+      if (!r.rejected_preview.length) tbody.append(el("tr", {}, el("td", { colspan: "3", class: "nil" }, "No rejected rows.")));
+      total = r.counts.rejected; shown = r.rejected_preview.length;
+    } else {
+      thead.append(el("tr", {}, el("th", { class: "rownum" }, "Row"), el("th", {}, "Name"), el("th", {}, "Field"), el("th", {}, "What the tool did")));
+      for (const x of r.review_preview) {
+        tbody.append(el("tr", {}, el("td", { class: "rownum" }, String(x.source_row)), el("td", {}, x.name || "—"),
+          el("td", { class: "mono-cell" }, x.field), el("td", { class: "wrap" }, x.issue)));
+      }
+      if (!r.review_preview.length) tbody.append(el("tr", {}, el("td", { colspan: "4", class: "nil" }, "Nothing to review.")));
+      total = r.counts.review + r.warnings.length; shown = r.review_preview.length;
+    }
+    $("table-more").textContent = total > shown ? `Showing the first ${shown.toLocaleString()} of ${total.toLocaleString()}. Download the file for all rows.` : "";
+  }
+
+  // ---------- downloads ----------
+  function download(kind, suffix) {
+    const r = state.result; if (!r || r.error) return;
+    const blob = new Blob([r.csv[kind]], { type: "text/csv;charset=utf-8" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: `${r.stem}_${suffix}.csv` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  }
+  $("dl-import").addEventListener("click", () => download("import", "reevo_import"));
+  $("dl-rejected").addEventListener("click", () => download("rejected", "rejected"));
+  $("dl-review").addEventListener("click", () => download("review", "review"));
+
+  // ---------- helpers ----------
+  function el(tag, attrs = {}, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    for (const k of kids) n.append(k);
+    return n;
+  }
+  function sentence(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+  function showError(title, help, msg) {
+    $("error-title").textContent = title; $("error-help").textContent = help; $("error-msg").textContent = msg || "";
+    $("error").hidden = false;
+  }
+  function hideError() { $("error").hidden = true; }
+
+  // Open in a working state: load the sample export once the engine is ready.
+  loadSample();
+})();
+</script>
+</body>
+</html>
