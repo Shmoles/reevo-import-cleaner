@@ -1,0 +1,4 @@
+Reevo Object:,Contact,Contact,Contact,Contact,Contact,Contact,Contact-Account,Account,Account,Account,Account
+Reevo Field:,Owner ID (email),First Name,Last Name,Email,Phone Number,Linkedin URL,Job Title,Owner ID (email),Name,Domain Name,Linkedin URL
+Required?,Recommended,Yes,Yes,"Yes, if no phone #","Yes, if no email",Recommended,Recommended,Recommended,Yes,Yes,Recommended
+Import Header:,contact_owner_id,contact_first_name,contact_last_name,contact_primary_email,contact_primary_phone_number,contact_linkedin_url,contact_account_role_title,account_owner_id,account_name,account_domain_name,account_linkedin_url
