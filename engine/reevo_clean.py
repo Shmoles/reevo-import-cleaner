@@ -20,7 +20,8 @@ Design rules
     * Nothing is dropped silently: every row lands in exactly one of import / rejected.
 
 All business rules live in the CONFIG section below so they can be changed without touching the logic.
-Requires: Python 3.9+, pandas (and openpyxl for .xlsx input).
+Requires: Python 3.9+, pandas (and openpyxl for .xlsx input) for the CLI.
+The cleaning core (process) is standard-library only, which is what lets the web app run it in the browser.
 """
 
 from __future__ import annotations
@@ -36,7 +37,8 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 
-import pandas as pd
+# pandas is only needed for reading files from disk (CLI). The web app passes rows in directly,
+# so the core engine runs on the Python standard library alone.
 
 # =====================================================================================
 # CONFIG
@@ -231,9 +233,14 @@ def _detect_encoding(path: Path) -> str:
     return "latin-1"
 
 
+LAST_READ_WIDTH = 0   # number of non-blank headers in the last file read_any() opened
+
+
 def read_any(path: Path, only_needed: bool = True) -> list[list[str]]:
     """Read csv/tsv/txt/xlsx/xls into a list of rows (all text). Row 0 is the header row.
     With only_needed=True, only the columns the tool maps are parsed (big speed-up on wide exports)."""
+    import pandas as pd
+
     ext = path.suffix.lower()
     if ext in (".xlsx", ".xlsm", ".xls"):
         df = pd.read_excel(path, header=None, dtype=str, keep_default_na=False)
@@ -241,9 +248,10 @@ def read_any(path: Path, only_needed: bool = True) -> list[list[str]]:
         enc = _detect_encoding(path)
         with path.open(encoding=enc, newline="") as fh:
             first = fh.readline()
-        # delimiter = whichever candidate appears most in the header line
-        sep = max([",", ";", "\t", "|"], key=first.count) if first else ","
+        sep = detect_delimiter(first)
         header = next(csv.reader([first], delimiter=sep), [])
+        global LAST_READ_WIDTH
+        LAST_READ_WIDTH = len([h for h in header if h.strip()])
         usecols = None
         if only_needed:
             found, rid = locate_columns([tidy(h) for h in header])
@@ -255,14 +263,31 @@ def read_any(path: Path, only_needed: bool = True) -> list[list[str]]:
     return df.values.tolist()
 
 
-def locate_columns(headers: list[str]):
-    """Map each Reevo field to the list of source column INDEXES (priority order) present in the file."""
+def detect_delimiter(header_line: str) -> str:
+    """Whichever candidate appears most in the header line."""
+    return max([",", ";", "\t", "|"], key=header_line.count) if header_line else ","
+
+
+def parse_text(text: str) -> list[list[str]]:
+    """Standard-library CSV/TSV parser (used by the web app, where pandas isn't loaded)."""
+    text = text.lstrip("\ufeff")
+    first = text.split("\n", 1)[0]
+    return [r for r in csv.reader(io.StringIO(text, newline=""), delimiter=detect_delimiter(first))]
+
+
+def locate_columns(headers: list[str], mapping: dict | None = None):
+    """Map each Reevo field to the list of source column INDEXES (priority order) present in the file.
+    mapping (optional) overrides the automatic match: {reevo_field: [exact header names, in priority order]};
+    an empty list means "don't fill this field"."""
     by_norm = defaultdict(list)                      # normalised header -> [col idx, ...] (duplicates kept)
     for i, h in enumerate(headers):
         if norm_header(h):
             by_norm[norm_header(h)].append(i)
     found = {}
     for field, names in SOURCES.items():
+        if mapping and field in mapping:
+            found[field] = [headers.index(n) for n in mapping[field] if n in headers]
+            continue
         idxs = []
         for n in names:
             idxs += [i for i in by_norm.get(norm_header(n), []) if i not in idxs]
@@ -320,9 +345,18 @@ def _has_data(row) -> bool:
     return any(c and c.strip() and c.strip().lower() not in NULL_TOKENS for c in row)
 
 
-def process(table, default_owner: str = ""):
-    """table: list of rows (row 0 = headers), or a header-less DataFrame. Returns cleaned output + reports."""
-    if isinstance(table, pd.DataFrame):
+def column_report(headers: list[str], mapping: dict | None = None) -> dict:
+    """{reevo_field: [source header names used, in priority order]} — shown in the web app."""
+    found, _ = locate_columns([tidy(h) for h in headers], mapping)
+    clean = [tidy(h) for h in headers]
+    return {f: [clean[i] for i in found[f]] for f in OUTPUT_COLUMNS}
+
+
+def process(table, default_owner: str = "", mapping: dict | None = None, source_columns: int | None = None):
+    """table: list of rows (row 0 = headers), or a header-less DataFrame. Returns cleaned output + reports.
+    mapping: optional column-mapping override, see locate_columns().
+    source_columns: column count of the original file, when the reader only loaded the columns it needs."""
+    if hasattr(table, "astype") and hasattr(table, "values"):          # pandas DataFrame
         table = table.astype(str).values.tolist()
     if not table:
         raise SystemExit("ERROR: file is empty.")
@@ -332,7 +366,7 @@ def process(table, default_owner: str = ""):
     src_rownums = [n for n, _ in numbered]
     rows = [r for _, r in numbered]
 
-    found, rid_idx = locate_columns(headers)
+    found, rid_idx = locate_columns(headers, mapping)
     run_warnings = []
 
     # ---- column-level checks: stop early if the file can't possibly work ----
@@ -349,8 +383,9 @@ def process(table, default_owner: str = ""):
             if f.endswith("owner_id") and default_owner:
                 continue
             run_warnings.append(f"No source column for {f}; it will be blank.")
-    if len([h for h in headers if h]) > EXPECTED_MAX_COLUMNS:
-        run_warnings.append(f"File has {len([h for h in headers if h])} columns (brief expects <= {EXPECTED_MAX_COLUMNS}). "
+    n_cols = source_columns or len([h for h in headers if h])
+    if n_cols > EXPECTED_MAX_COLUMNS:
+        run_warnings.append(f"File has {n_cols} columns (brief expects <= {EXPECTED_MAX_COLUMNS}). "
                             "Processed anyway; extra columns ignored.")
 
     owner_default, owner_note = clean_owner(default_owner) if default_owner else ("", "")
@@ -465,6 +500,7 @@ def process(table, default_owner: str = ""):
             review.append({**label, "field": "(row)", "issue": "exact duplicate of an earlier row; removed"})
             continue
         seen.add(key)
+        rec["_source_row"] = rownum          # not exported (write_csv only writes OUTPUT_COLUMNS); used by the web app
         out.append(rec)
 
     # ---- same email on multiple contacts (dedupe rules are Part 2; flag only) ----
@@ -488,12 +524,27 @@ def process(table, default_owner: str = ""):
     return out, rejected, review, run_warnings, dup_count
 
 
-def write_csv(path: Path, rows: list[dict], columns: list[str] | None = None):
+def to_csv_text(rows: list[dict], columns: list[str] | None = None) -> str:
     cols = columns or (list(dict.fromkeys(k for r in rows for k in r)) if rows else ["(none)"])
+    buf = io.StringIO(newline="")
+    w = csv.DictWriter(buf, fieldnames=cols, extrasaction="ignore", quoting=csv.QUOTE_MINIMAL)
+    w.writeheader()
+    w.writerows(rows)
+    return buf.getvalue()
+
+
+REVIEW_COLUMNS = ["source_row", "record_id", "name", "field", "issue"]
+
+
+def with_file_level(review: list[dict], warnings: list[str]) -> list[dict]:
+    """Prepend file-level warnings to the review rows (source_row = ALL)."""
+    return [{"source_row": "ALL", "record_id": "", "name": "", "field": "(file)", "issue": w}
+            for w in warnings] + review
+
+
+def write_csv(path: Path, rows: list[dict], columns: list[str] | None = None):
     with path.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore", quoting=csv.QUOTE_MINIMAL)
-        w.writeheader()
-        w.writerows(rows)
+        fh.write(to_csv_text(rows, columns))
 
 
 def main(argv=None):
@@ -509,8 +560,10 @@ def main(argv=None):
         check_template(a.template)
     if not a.input.exists():
         raise SystemExit(f"ERROR: file not found: {a.input}")
+    global LAST_READ_WIDTH
+    LAST_READ_WIDTH = 0
     table = read_any(a.input)
-    out, rejected, review, warnings, dups = process(table, a.default_owner)
+    out, rejected, review, warnings, dups = process(table, a.default_owner, source_columns=LAST_READ_WIDTH or None)
 
     a.out.mkdir(parents=True, exist_ok=True)
     stem = re.sub(r"[^\w.-]+", "_", a.input.stem)
@@ -519,8 +572,7 @@ def main(argv=None):
     p_rev = a.out / f"{stem}_review.csv"
     write_csv(p_imp, out, OUTPUT_COLUMNS)
     write_csv(p_rej, rejected, None if rejected else ["source_row", "reject_reason"])
-    file_level = [{"source_row": "ALL", "record_id": "", "name": "", "field": "(file)", "issue": w} for w in warnings]
-    write_csv(p_rev, file_level + review, ["source_row", "record_id", "name", "field", "issue"])
+    write_csv(p_rev, with_file_level(review, warnings), REVIEW_COLUMNS)
 
     total = len(out) + len(rejected) + dups
     print(f"\nReevo import cleaner  —  {a.input.name}")

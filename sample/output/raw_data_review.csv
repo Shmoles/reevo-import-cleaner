@@ -1,6 +1,7 @@
 source_row,record_id,name,field,issue
 ALL,,,(file),No source column for contact_owner_id; it will be blank.
 ALL,,,(file),No source column for account_owner_id; it will be blank.
+ALL,,,(file),File has 73 columns (brief expects <= 50). Processed anyway; extra columns ignored.
 ALL,,,(file),"contact_linkedin_url: source columns ['Personal Linkedin URL', 'linkedinURL'] disagree on 47 rows; used 'Personal Linkedin URL' and fell back to the others only when it was blank. Confirm with the customer which column is authoritative."
 11,162d31fe-667f-3b64-874d-dabf778c5271,Bruce Wayne,contact_last_name,split full name from First Name: 'Bruce Wayne'
 11,162d31fe-667f-3b64-874d-dabf778c5271,Bruce Wayne,account_domain_name,no Website; derived 'apple.com' from contact email

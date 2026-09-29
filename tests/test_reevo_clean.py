@@ -147,12 +147,24 @@ ok("changed Reevo template -> clear error", r.returncode != 0 and "template head
 
 # 9. Output file shape: exactly 11 columns, one header row, no helper rows / column A
 p_out = TMP / "shape"
-subprocess.run([sys.executable, str(ENGINE), str(RAW), "--out", str(p_out)], check=True, capture_output=True)
+r = subprocess.run([sys.executable, str(ENGINE), str(RAW), "--out", str(p_out)], check=True, capture_output=True, text=True)
+ok("CLI still warns about >50 columns when it only reads the needed ones", "File has 73 columns" in r.stdout)
 f = pd.read_csv(p_out / "raw_data_reevo_import.csv", dtype=str, keep_default_na=False)
 ok("import file has exactly the 11 Reevo headers, in order", f.columns.tolist() == rc.OUTPUT_COLUMNS)
 ok("every input row is accounted for (import + rejected)", len(base) + len(base_rej) == len(src))
 
-# 10. Runtime at scale
+# 10. Web app paths: stdlib parser (no pandas) and manual column-mapping override
+web_rows = rc.parse_text(RAW.read_text(encoding="utf-8-sig"))
+web_out, *_ = run(web_rows)
+ok("browser parser (stdlib only) -> identical output", web_out.equals(base))
+semi = src.to_csv(index=False, sep=";")
+ok("browser parser detects ';' delimiter", run(rc.parse_text(semi))[0].equals(base))
+ovr, *_ = run(web_rows, mapping={"contact_linkedin_url": ["linkedinURL"], "contact_account_role_title": []})
+ok("mapping override switches source column",
+   ovr.contact_linkedin_url.iloc[0] == "https://www.linkedin.com/in/alexander-nelson")
+ok("mapping override can blank a field", ovr.contact_account_role_title.eq("").all())
+
+# 11. Runtime at scale
 if BENCH_ROWS:
     big = pd.concat([src] * (BENCH_ROWS // len(src) + 1), ignore_index=True).iloc[:BENCH_ROWS].copy()
     # make every contact unique so caching can't flatter the benchmark (companies still repeat, as in real life)
