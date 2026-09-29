@@ -66,7 +66,7 @@ BENCH_ROWS=0 python tests/test_reevo_clean.py # skip the benchmark
 
 The suite runs automatically on every push through GitHub Actions (badge on the main README).
 
-31 checks, including:
+36 checks, including:
 - shuffled columns
 - renamed or oddly-cased headers
 - 12-column vs 73-column files
@@ -75,4 +75,5 @@ The suite runs automatically on every push through GitHub Actions (badge on the 
 - messy emails, phones, URLs and names
 - blank rows and duplicate rows
 - clear errors for a missing required column or a changed template
-- a runtime benchmark: 100,000 unique contacts × 73 columns (390 MB) in about 7s
+- the browser path: the web parser and manual column-mapping overrides give the same results
+- a runtime benchmark: 100,000 unique contacts × 73 columns (390 MB) in about 8s

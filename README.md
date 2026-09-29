@@ -4,47 +4,38 @@
 
 Give it a customer's HubSpot export and it gives back a file that's ready to upload to Reevo.
 
-<!-- VIDEO WALKTHROUGH: add once the website tool is live -->
+**Open the tool: https://shmoles.github.io/reevo-import-cleaner/**
+
+<!-- VIDEO WALKTHROUGH: add here -->
 
 ## How to use it
 
-**1. Set up (one time)**
+1. **Open the tool** at the link above. It loads with a sample file so you can see what it does.
+2. **Drop in the customer's HubSpot export** (.csv or .xlsx). Columns can be in any order.
+3. **Optional:** enter a default record owner email if the export doesn't have owners.
+4. **Download the import file** and upload it to Reevo.
 
-Install [Python](https://www.python.org/downloads/). Then download this repo (green **Code** button → **Download ZIP**), unzip it, open a terminal in the folder, and run:
-
-```bash
-pip install -r requirements.txt
-```
-
-On a Mac, use `pip3` and `python3` in place of `pip` and `python`.
-
-**2. Clean a file**
-
-```bash
-python engine/reevo_clean.py "path/to/hubspot_export.csv"
-```
-
-CSV and Excel files both work, with the columns in any order.
-
-**3. Get your results**
-
-A new `output` folder appears with three files:
+You also get two more files to download:
 
 | File | What to do with it |
 |---|---|
-| `..._reevo_import.csv` | **Upload this to Reevo.** |
-| `..._rejected.csv` | Rows that couldn't be imported, with the reason. Send back to the customer to fix. |
-| `..._review.csv` | Rows that were imported but that the tool changed or guessed at. Skim before uploading. |
+| Rejected rows | Rows that couldn't be imported, with the reason. Send back to the customer to fix. |
+| Review notes | Rows that were imported but that the tool changed or guessed at. Skim before uploading. |
 
-Want to see an example first? [`sample/output/`](sample/output/) has the results from the sample file.
+The file is processed inside your browser tab. It is never uploaded anywhere.
 
-## Optional: set a record owner
+**If a column isn't recognized**, the tool tells you which Reevo field is missing. Pick the right column from the dropdown in **Column mapping** and the results update right away.
 
-HubSpot exports often don't include an owner. To assign every contact and account to one Reevo user:
+## Command-line version
+
+The website runs the same engine as [`engine/reevo_clean.py`](engine/reevo_clean.py), which can also be run directly. This is useful for scripting or very large files.
 
 ```bash
+pip install -r requirements.txt
 python engine/reevo_clean.py "path/to/hubspot_export.csv" --default-owner rep@company.com
 ```
+
+The three files are written to an `output` folder. [`sample/output/`](sample/output/) shows the results for the sample file.
 
 ## More detail
 
