@@ -1,0 +1,8 @@
+source_row,record_id,name,field,issue
+ALL,,,(file),No source column for contact_owner_id; it will be blank.
+ALL,,,(file),No source column for account_owner_id; it will be blank.
+ALL,,,(file),"contact_linkedin_url: source columns ['Personal Linkedin URL', 'linkedinURL'] disagree on 47 rows; used 'Personal Linkedin URL' and fell back to the others only when it was blank. Confirm with the customer which column is authoritative."
+11,162d31fe-667f-3b64-874d-dabf778c5271,Bruce Wayne,contact_last_name,split full name from First Name: 'Bruce Wayne'
+11,162d31fe-667f-3b64-874d-dabf778c5271,Bruce Wayne,account_domain_name,no Website; derived 'apple.com' from contact email
+27,db25fb94-a5b7-32cb-83d6-c83b847614a0,Jonathan Jones,contact_primary_phone_number,only phone is the Office line (may be a switchboard)
+29,0392e90c-53e0-3b50-92b9-ce18a3944b22,Joseph Rui,account_domain_name,no Website; derived 'asml.com' from contact email
