@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Edge-case tests + 100k-row benchmark
+        run: python tests/test_reevo_clean.py
+      - name: Run on the sample file
+        run: python engine/reevo_clean.py sample/raw_data.csv --template sample/reevo_template.csv --out /tmp/out
